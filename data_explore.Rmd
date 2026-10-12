@@ -1,0 +1,86 @@
+---
+title: "midterm_data_in"
+author: "Lucy Warren"
+date: "2026-10-09"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+setwd("/Users/lucywarren/stat543-fall2026/STAT543-Midterm")
+stops <- read.csv("/Users/lucywarren/stat543-fall2026/STAT543-Midterm/CT_traffic_stops/CT_stops.csv")
+```
+
+```{r}
+dim(stops)
+colnames(stops)
+```
+
+```{r}
+library(dplyr)
+
+stops <- stops %>% filter(search_conducted == TRUE)
+dim(stops)
+pct <- nrow(stops) / 268669
+
+cat("Searches were conducted in %", round(pct * 100, 1), "of stops.")
+```
+
+```{r}
+stops_with_cb <- stops %>% filter(contraband_found == TRUE)
+dim(stops_with_cb)
+pct <- nrow(stops_with_cb) / nrow(stops)
+pct2 <- nrow(stops_with_cb) / 268669
+
+cat("Contraband was found in %", round(pct * 100, 1), "of searches and %", round(100* pct2, 1), "of all stops.")
+```
+
+```{r}
+colSums(is.na(stops))
+```
+
+```{r}
+stops_with_missing_stop_time <- stops %>%
+  filter(is.na(stop_time), contraband_found == TRUE)
+pct <- nrow(stops_with_missing_stop_time) / nrow(stops)
+cat("Contraband was found in %", round(pct * 100, 1), "of searches with n/a stop_time.\n")
+
+stops_with_missing_search_type <- stops %>%
+  filter(is.na(search_type), contraband_found == TRUE)
+pct <- nrow(stops_with_missing_search_type) / nrow(stops)
+cat("Contraband was found in %", round(pct * 100, 1), "of searches with n/a search_type.\n")
+
+stops_with_missing_is_arrested <- stops %>%
+  filter(is.na(is_arrested), contraband_found == TRUE)
+pct <- nrow(stops_with_missing_is_arrested) / nrow(stops)
+cat("Contraband was found in %", round(pct * 100, 1), "of searches with n/a is_arrested.\n")
+
+stops_with_missing_stop_outcome <- stops %>%
+  filter(is.na(stop_outcome), contraband_found == TRUE)
+pct <- nrow(stops_with_missing_stop_outcome) / nrow(stops)
+cat("Contraband was found in %", round(pct * 100, 1), "of searches with n/a stop_outcome.")
+```
+county_name, county_fips, location_raw all say similar/same thing - choose one
+
+remove raw columns for driver_age, driver_race, search_type, violation - only use cleaned cols
+
+state is constant - remove it
+
+fine_grained_location is redundant - remove
+
+stop_outcome and is_arrested leaks info about the outcome of the search - drop
+
+fill stop_time with mean or median??
+
+what do we dow ith missing search_type values??
+
+```{r}
+plot(density(stops$driver_age, na.rm=TRUE),
+     main = "Distribution of driver_age",
+     col = "purple",
+     lwd = 2)
+```
