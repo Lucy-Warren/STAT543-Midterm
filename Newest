@@ -1,0 +1,159 @@
+---
+title: "midterm_data_in"
+author: "Lucy Warren"
+date: "2026-10-09"
+output:
+  word_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# Introduction
+The goal of this project is to develop a logistic regression model to predict whether contraband is found when a vehicle is searched during a traffic stop. The data contain Connecticut State Police traffic stops from October 2013 through March 2015. In this first stage, we explore the data, assess missing information, and prepare potential predictors for modeling. We examine predictor distributions, consider transformations, and investigate relationships between predictors and search outcomes, as well as relationships among predictors.
+
+
+# Exploring and Transforming the Data
+## Importing and Inspecting the Data
+We imported the data and checked its dimensions and variable names. The dataset contains 268,669 traffic stops and 24 variables.
+```{r, include=FALSE}
+setwd("/Users/lucywarren/stat543-fall2026/STAT543-Midterm")
+stops <- read.csv("/Users/lucywarren/stat543-fall2026/STAT543-Midterm/CT_traffic_stops/CT_stops.csv")
+
+
+stops <- read.csv("CT_traffic_stops/CT_stops.csv")
+
+dim(stops)
+colnames(stops)
+```
+
+
+## Identifying Searched Stops
+We created a separate dataset of searched stops because our model will predict contraband discovery following a search. We retained the full dataset for comparisons between searched and unsearched stops.
+```{r, include=FALSE}
+library(dplyr)
+
+searched_stops <- stops %>% filter(search_conducted == TRUE)
+dim(searched_stops)
+pct <- nrow(searched_stops) / 268669
+
+cat("Searches were conducted in", round(pct * 100, 1), "% of stops.")
+```
+Searches occurred in 4,487 stops, approximately 1.7% of all stops.
+
+
+## Summarizing Contraband Discovery
+We calculated how frequently contraband was found among searches and among all traffic stops.
+```{r, include=FALSE}
+stops_with_cb <- searched_stops %>% filter(contraband_found == TRUE)
+dim(stops_with_cb)
+pct <- nrow(stops_with_cb) / nrow(searched_stops)
+pct2 <- nrow(stops_with_cb) / 268669
+
+cat("Contraband was found in", round(pct * 100, 1), "% of searches and", round(100* pct2, 1), "% of all stops.")
+```
+Contraband was found in 1,530 stops, representing 34.1% of searches and 0.6% of all stops.
+
+
+## Assessing Missing Data
+We counted missing values among searched stops to guide decisions about cleaning the data and selecting predictors.
+```{r, echo=FALSE}
+missing_counts <- colSums(is.na(searched_stops))
+missing_counts[missing_counts >0]
+```
+Search type had 407 missing values, while driver age and stop time each had six. Arrest status and stop outcome each had 43 missing values.
+
+
+## Examining Missing Information and Contraband
+We calculated the percentage of all searches with both missing information and contraband found. These percentages describe how often the two occurred together, rather than discovery rates among records with missing information.
+```{r, include = FALSE}
+stops_with_missing_stop_time <- searched_stops %>%
+  filter(is.na(stop_time), contraband_found == TRUE)
+pct <- nrow(stops_with_missing_stop_time) / nrow(searched_stops)
+cat("Contraband was found in", round(pct * 100, 1), "% of searches with n/a stop_time.\n")
+
+stops_with_missing_search_type <- searched_stops %>%
+  filter(is.na(search_type), contraband_found == TRUE)
+pct <- nrow(stops_with_missing_search_type) / nrow(searched_stops)
+cat("Contraband was found in", round(pct * 100, 1), "% of searches with n/a search_type.\n")
+
+stops_with_missing_is_arrested <- searched_stops %>%
+  filter(is.na(is_arrested), contraband_found == TRUE)
+pct <- nrow(stops_with_missing_is_arrested) / nrow(searched_stops)
+cat("Contraband was found in", round(pct * 100, 1), "% of searches with n/a is_arrested.\n")
+
+stops_with_missing_stop_outcome <- searched_stops %>%
+  filter(is.na(stop_outcome), contraband_found == TRUE)
+pct <- nrow(stops_with_missing_stop_outcome) / nrow(searched_stops)
+cat("Contraband was found in", round(pct * 100, 1), "% of searches with n/a stop_outcome.")
+```
+To assess whether records with missing information included positive contraband findings, we examined their overlap. Of all searched stops, 1.6% had both missing search type and contraband found; 0.1% had missing arrest status and contraband found, and 0.1% had missing stop outcome and contraband found. The corresponding percentage for missing stop time rounded to 0.0%. These percentages use all searched stops as the denominator.
+
+-----
+county_name, county_fips, location_raw all say similar/same thing - choose one
+
+remove raw columns for driver_age, driver_race, search_type, violation - only use cleaned cols
+
+state is constant - remove it
+
+fine_grained_location is redundant - remove
+
+stop_outcome and is_arrested leaks info about the outcome of the search - drop
+
+fill stop_time with mean or median??
+
+what do we do with missing search_type values??
+-----
+
+## Cleaning and Preparing Predictors
+We created a separate cleaned dataset to preserve the original data. We retained standardized variables and county name, removing raw duplicates, constant columns, and detailed location fields to simplify the analysis. We excluded stop outcome and arrest status as potential predictors because they may reflect consequences of contraband discovery. Missing search types were labeled "Unknown" to retain those observations.
+```{r, include=FALSE}
+cleaned_searches <- searched_stops %>%
+  select(-county_fips,
+         -location_raw,
+         -driver_age_raw,
+         -driver_race_raw,
+         -search_type_raw,
+         -violation_raw,
+         -state,
+         -police_department,
+         -fine_grained_location,
+         -stop_outcome,
+         -is_arrested) %>%
+  mutate(
+    county_name = factor(county_name),
+    search_type = factor(
+      ifelse(is.na(search_type), "Unknown", as.character(search_type))
+    )
+  )
+```
+The cleaned dataset retains all 4,487 searched stops. Missing ages and stop times remain unchanged while we evaluate how to handle them.
+
+
+## Exploring the Age Distribution
+We examined driver age among searched stops to assess skewness and the potential need for a transformation.
+```{r, echo=FALSE}
+plot(density(cleaned_searches$driver_age, na.rm=TRUE),
+     main = "Distribution of driver_age",
+     xlab = "Driver age (years)",
+     col = "purple",
+     lwd = 2)
+```
+The age distribution among drivers whose vehicles were searched is right-skewed, with most ages concentrated in the 20s and fewer drivers at older ages. The long right tail suggests that an age transformation may help reduce skewness. We will compare the original distribution with transformed values before deciding whether to transform age.
+
+
+## Comparing Age by Contraband Outcome
+We compared driver ages between searches that found contraband and those that did not to explore age's relationship with the outcome.
+```{r, echo=FALSE}
+boxplot(driver_age ~ contraband_found,
+        data = cleaned_searches,
+        names = c("Not found", "Found"),
+        main = "Driver Age by Contraband Search Outcome",
+        xlab = "Contraband outcome",
+        ylab = "Driver age (years)",
+        col = c("lightblue", "lightgreen"))
+```
+Among searched drivers, those for whom contraband was found had a slightly lower median age, approximately 25 years, compared with approximately 28 years for those for whom contraband was not found. The contraband-found group also had a smaller interquartile range, indicating less variability in the middle 50% of ages. Both groups had older-age outliers and substantial overlap. These results suggest an association between age and contraband discovery, but age alone does not clearly distinguish the two outcomes.
