@@ -68,15 +68,64 @@ county_name, county_fips, location_raw all say similar/same thing - choose one
 
 remove raw columns for driver_age, driver_race, search_type, violation - only use cleaned cols
 
-state is constant - remove it
+state and police department are constant - remove it
 
 fine_grained_location is redundant - remove
 
-stop_outcome and is_arrested leaks info about the outcome of the search - drop
+stop_duration, stop_outcome, and is_arrested leaks info about the outcome of the search - drop
 
 fill stop_time with mean or median??
 
-what do we dow ith missing search_type values??
+what do we dow with missing search_type values??
+
+```{r}
+glimpse(search_stops)
+```
+
+```{r}
+library(lubridate)
+
+our_stops = stops[, c("stop_date", "stop_time", "county_name", "driver_gender", "driver_age", "driver_race", "violation", "search_conducted", "search_type", "contraband_found")]
+
+our_stops
+colSums(is.na(our_stops))
+
+# fill missing search type values
+# no_search if search_conducted is false
+# no_type if search_conducted is true
+our_stops <- our_stops %>%
+  mutate(search_type = case_when(
+    is.na(search_type) & !search_conducted ~ "no_search",
+    is.na(search_type) & search_conducted ~ "no_type",
+    TRUE ~ search_type
+  ))
+
+colSums(is.na(our_stops))
+
+# convert stop time to binned time groups
+# drop rows with NA
+our_stops <- our_stops %>%
+  mutate(
+    stop_time_bin = na_if(stop_time, "NA"),
+    stop_hour = hour(hms(stop_time_bin)),
+    stop_time_bin = case_when(
+      is.na(stop_hour) ~ NA_character_,
+      stop_hour >= 0  & stop_hour < 4  ~ "late_night",      # 0:00-3:59
+      stop_hour >= 4  & stop_hour < 7  ~ "early_morning",  # 4:00-6:59
+      stop_hour >= 7  & stop_hour < 12 ~ "morning",        # 7:00-11:59
+      stop_hour >= 12 & stop_hour < 17 ~ "afternoon",      # 12:00-16:59
+      stop_hour >= 17 & stop_hour < 21 ~ "evening",        # 17:00-20:59
+      stop_hour >= 21 & stop_hour < 24 ~ "night",          # 21:00-23:59
+    ),
+    stop_time_bin = factor(stop_time_bin,
+      levels = c("late_night", "early_morning", "morning", "afternoon",
+                 "evening", "night"))
+  )
+our_stops <- our_stops %>% 
+  filter(!is.na(stop_time_bin)) %>%
+  select(-stop_time)
+our_stops
+```
 
 ```{r}
 plot(density(stops$driver_age, na.rm=TRUE),
