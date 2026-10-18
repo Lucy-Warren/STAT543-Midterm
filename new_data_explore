@@ -35,16 +35,16 @@ cat("Searches were conducted in", round(pct * 100, 1), "% of stops.")
 ```
 
 ```{r}
-stops_with_cb <- searched_stops %>% filter(contraband_found == TRUE)
+stops_with_cb <- stops %>% filter(contraband_found == TRUE)
 dim(stops_with_cb)
-pct <- nrow(stops_with_cb) / nrow(searched_stops)
+pct <- nrow(stops_with_cb) / nrow(search_stops)
 pct2 <- nrow(stops_with_cb) / 268669
 
-cat("Contraband was found in", round(pct * 100, 1), "% of searches and", round(100* pct2, 1), "% of all stops.")
+cat("Contraband was found in %", round(pct * 100, 1), "of searches and %", round(100* pct2, 1), "of all stops.")
 ```
 
 ```{r}
-colSums(is.na(searched_stops))
+colSums(is.na(stops))
 ```
 
 ```{r}
@@ -80,11 +80,152 @@ stop_outcome and is_arrested leaks info about the outcome of the search - drop
 
 fill stop_time with mean or median??
 
-what do we dow ith missing search_type values??
+what do we do with missing search_type values??
+
+```{r}
+glimpse(search_stops)
+```
 
 ```{r}
 plot(density(searched_stops$driver_age, na.rm=TRUE),
      main = "Distribution of driver_age",
      col = "purple",
      lwd = 2)
+```
+
+```{r}
+library(lubridate)
+library(stringr)
+library(tidyverse)
+
+our_stops = stops[, c("stop_date", "stop_time", "county_name", "driver_gender", "driver_age", "driver_race", "violation", "search_conducted", "search_type", "contraband_found", "stop_outcome")]
+
+# convert date column to months only
+our_stops <- our_stops %>% 
+  mutate(month = month(ymd(stop_date))) %>%
+  select(-stop_date)
+
+# fill missing search type values
+# no_search if search_conducted is false
+# no_type if search_conducted is true
+our_stops <- our_stops %>%
+  mutate(search_type = case_when(
+    is.na(search_type) & !search_conducted ~ "no_search",
+    is.na(search_type) & search_conducted ~ "no_type",
+    TRUE ~ search_type
+  ))
+
+# convert stop time to binned time groups
+# drop rows with NA
+our_stops <- our_stops %>%
+  mutate(
+    stop_time_bin = na_if(stop_time, "NA"),
+    stop_hour = hour(hms(stop_time_bin)),
+    stop_time_bin = case_when(
+      is.na(stop_hour) ~ NA_character_,
+      stop_hour >= 0  & stop_hour < 4  ~ "late_night",      # 0:00-3:59
+      stop_hour >= 4  & stop_hour < 7  ~ "early_morning",  # 4:00-6:59
+      stop_hour >= 7  & stop_hour < 12 ~ "morning",        # 7:00-11:59
+      stop_hour >= 12 & stop_hour < 17 ~ "afternoon",      # 12:00-16:59
+      stop_hour >= 17 & stop_hour < 21 ~ "evening",        # 17:00-20:59
+      stop_hour >= 21 & stop_hour < 24 ~ "night",          # 21:00-23:59
+    ),
+    stop_time_bin = factor(stop_time_bin,
+      levels = c("late_night", "early_morning", "morning", "afternoon",
+                 "evening", "night"))
+  )
+our_stops <- our_stops %>% 
+  filter(!is.na(stop_time_bin)) %>%
+  select(-stop_time) %>%
+  select(-stop_hour)
+
+# drops rows with NA county_name
+our_stops <- our_stops %>% 
+  filter(!is.na(county_name))
+
+# log-transform the right-skewed age variable
+# remove rows missing age
+our_stops$log_driver_age <- log(our_stops$driver_age)
+our_stops <- our_stops %>% 
+  filter(!is.na(log_driver_age)) %>%
+  select(-driver_age)
+
+# drop rows with NA stop_outcome (target)
+our_stops <- our_stops %>% 
+  filter(!is.na(stop_outcome))
+
+# split violations into one column per violation type
+# 0 for no violation, 1 for violation
+# add column for number of violations
+our_stops <- our_stops %>% mutate(stop_id = row_number())
+
+violation_flags <- our_stops %>%
+  select(stop_id, violation) %>%
+  separate_rows(violation, sep = ",") %>%
+  mutate(violation = str_squish(violation),
+         present = 1L) %>%
+  distinct(stop_id, violation, present) %>%
+  pivot_wider(names_from = violation,
+              values_from = present,
+              values_fill = 0L,
+              names_prefix = "viol_")
+
+violation_flags <- janitor::clean_names(violation_flags)
+
+our_stops <- our_stops %>%
+  left_join(violation_flags, by = "stop_id") %>%
+  mutate(n_violations = rowSums(across(starts_with("viol_"))))
+
+our_stops <- our_stops %>%
+  select(-violation) %>%
+  select(-stop_id)
+
+our_stops <- our_stops %>%
+  mutate(across(starts_with("viol_"), factor)) %>%
+  mutate(n_violations = factor(n_violations)) %>%
+  mutate(month = factor(month))
+  
+colSums(is.na(our_stops))
+our_stops
+```
+
+```{r}
+# plot predictors vs stop outcomes
+plot_outcome_by <- function(data, var, outcome = "stop_outcome") {
+  ggplot(data, aes(x = .data[[var]], fill = .data[[outcome]])) +
+    geom_bar(position = "fill") +
+    labs(title = paste("Stop Outcome by", str_to_title(str_replace_all(var, "_", " "))),
+         x = str_to_title(str_replace_all(var, "_", " ")),
+         fill = "Stop Outcome") +
+    scale_y_continuous(labels = scales::percent) +
+    scale_fill_viridis_d(option = "turbo", begin = 0.1, end = 0.9) +
+    theme_classic() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1),
+          axis.title.y = element_blank(),
+          plot.title = element_text(size = 9.5, hjust = 0.5))
+}
+
+cat_vars <- our_stops %>% 
+  select(where(~ is.factor(.x) || is.character(.x)), -stop_outcome) %>% 
+  names()
+num_vars <- our_stops %>% 
+  select(where(is.numeric), -any_of("stop_id")) %>% 
+  names() 
+
+cat_plots <- map(cat_vars, ~ plot_outcome_by(our_stops, .x)) %>% set_names(cat_vars)
+
+plot_num_by_outcome <- function(data, var, outcome = "stop_outcome") {
+  ggplot(data, aes(x = .data[[var]], fill = .data[[outcome]])) +
+    geom_density(alpha = 0.5) +
+    scale_fill_viridis_d(option = "turbo", begin = 0.1, end = 0.9) +
+    labs(x = str_to_title(str_replace_all(var, "_", " ")), fill = "Stop Outcome") +
+    theme_classic()
+}
+
+num_plots <- map(num_vars, ~ plot_num_by_outcome(our_stops, .x)) %>% set_names(num_vars)
+```
+
+```{r}
+walk(cat_plots, print)
+walk(num_plots, print)
 ```
