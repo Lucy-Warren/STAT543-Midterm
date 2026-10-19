@@ -1,0 +1,475 @@
+---
+title: "midterm_project.Rmd"
+author: "Melia Warner"
+date: "2026-10-19"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+
+library(dplyr)
+library(lubridate)
+library(stringr)
+library(tidyverse)
+```
+
+
+# Introduction
+
+The goal of this project is to develop a logistic regression model to predict whether contraband is found when a vehicle is searched during a traffic stop. The data contain Connecticut State Police traffic stops from October 2013 through March 2015. In this first stage, we explore the data, assess missing information, and prepare potential predictors for modeling. We examine predictor distributions, consider transformations, and investigate relationships between predictors and search outcomes, as well as relationships among predictors.
+
+We also explore potential racial disparities through the outcome test, which compares the proportion of searches resulting in contraband discovery across racial groups. Differences in these rates may suggest varying standards for conducting searches, but do not necessarily establish discrimination, as other factors may influence search outcomes.
+
+We begin by examining the structure and quality of the dataset to identify any necessary cleaning steps before conducting our exploratory analysis.
+
+# Exploring and Transforming the Data
+
+## Importing and Inspecting the Data
+
+```{r, include=FALSE}
+# Import the data using a path relative to the project folder.
+stops <- read.csv("CT_traffic_stops/CT_stops.csv")
+
+# Check the number of observations and available variables.
+dim(stops)
+colnames(stops)
+```
+
+The dataset contains 268,669 traffic stops and 24 variables. Each row represents one traffic stop.
+
+## Identifying Searched Stops
+
+```{r, include=FALSE}
+# Preserve all stops and create a separate searched-only dataset.
+searched_stops <- stops %>%
+  filter(search_conducted == TRUE)
+
+dim(searched_stops)
+
+# Calculate the proportion of all stops involving a search.
+pct <- nrow(searched_stops) / 268669
+
+cat("Searches were conducted in", round(pct * 100, 1),
+    "% of stops.")
+```
+
+We created a separate dataset of searched stops because our eventual model predicts contraband discovery following a search. Searches occurred in 4,487 stops, approximately 1.7% of all stops. The full dataset was retained for comparisons between searched and unsearched stops.
+
+## Summarizing Contraband Discovery
+
+```{r, include=FALSE}
+# Identify searched stops where contraband was found.
+stops_with_cb <- searched_stops %>%
+  filter(contraband_found == TRUE)
+
+dim(stops_with_cb)
+
+# Use different denominators for searches and all traffic stops.
+pct <- nrow(stops_with_cb) / nrow(searched_stops)
+pct2 <- nrow(stops_with_cb) / 268669
+
+cat("Contraband was found in", round(pct * 100, 1),
+    "% of searches and", round(100 * pct2, 1),
+    "% of all stops.")
+```
+
+Contraband was found in 1,530 stops, representing 34.1% of searches and 0.6% of all stops.
+
+## Assessing Missing Data
+
+```{r}
+# Count missing values among searched stops.
+missing_counts <- colSums(is.na(searched_stops))
+
+# Display only variables with missing values.
+missing_counts[missing_counts > 0]
+```
+
+We examined missing values to guide cleaning decisions. Search type had 407 missing values, while driver age and stop time each had six. Arrest status and stop outcome each had 43 missing values.
+
+## Examining Missing Information and Contraband
+
+```{r, include=FALSE}
+# Count searches with both missing stop time and contraband found.
+stops_with_missing_stop_time <- searched_stops %>%
+  filter(is.na(stop_time), contraband_found == TRUE)
+
+pct <- nrow(stops_with_missing_stop_time) / nrow(searched_stops)
+
+cat(round(pct * 100, 1),
+    "% of all searches had both missing stop_time and contraband found.\n")
+
+# Repeat for missing search type.
+stops_with_missing_search_type <- searched_stops %>%
+  filter(is.na(search_type), contraband_found == TRUE)
+
+pct <- nrow(stops_with_missing_search_type) / nrow(searched_stops)
+
+cat(round(pct * 100, 1),
+    "% of all searches had both missing search_type and contraband found.\n")
+
+# Repeat for missing arrest status.
+stops_with_missing_is_arrested <- searched_stops %>%
+  filter(is.na(is_arrested), contraband_found == TRUE)
+
+pct <- nrow(stops_with_missing_is_arrested) / nrow(searched_stops)
+
+cat(round(pct * 100, 1),
+    "% of all searches had both missing is_arrested and contraband found.\n")
+
+# Repeat for missing stop outcome.
+stops_with_missing_stop_outcome <- searched_stops %>%
+  filter(is.na(stop_outcome), contraband_found == TRUE)
+
+pct <- nrow(stops_with_missing_stop_outcome) / nrow(searched_stops)
+
+cat(round(pct * 100, 1),
+    "% of all searches had both missing stop_outcome and contraband found.\n")
+```
+
+Of all searched stops, 1.6% had both missing search type and contraband found. The corresponding percentages for missing arrest status and stop outcome were each 0.1%, while the percentage for missing stop time rounded to 0.0%. These percentages use all searched stops as the denominator, not only those with missing information.
+
+## Exploring the Age Distribution
+
+```{r}
+# Examine the age distribution before considering transformations.
+# Missing ages are omitted from the density estimate.
+plot(density(searched_stops$driver_age, na.rm = TRUE),
+     main = "Age Distribution Among Searched Drivers",
+     xlab = "Driver age (years)",
+     col = "purple",
+     lwd = 2)
+```
+
+Age among searched drivers is right-skewed, with most ages concentrated in the 20s and a long tail toward older ages. This suggests comparing transformations that compress larger values. The plot includes 4,481 ages because six searched stops have missing ages.
+
+## Comparing Age by Contraband Outcome
+
+```{r}
+# Compare median age and variability between contraband outcomes.
+boxplot(driver_age ~ contraband_found,
+        data = searched_stops,
+        names = c("Not found", "Found"),
+        main = "Driver Age by Contraband Search Outcome",
+        xlab = "Contraband outcome",
+        ylab = "Driver age (years)",
+        col = c("lightblue", "lightgreen"))
+```
+
+The contraband-found group had a slightly lower median age, approximately 25 years versus 28 years, and a smaller interquartile range. Both groups had older-age outliers and substantial overlap, so age alone does not clearly distinguish the outcomes.
+
+## Comparing Age Transformations
+
+```{r, fig.width=10, fig.height=4}
+# Compare the original ages with square-root and log transformations.
+old_par <- par(mfrow = c(1, 3))
+
+hist(searched_stops$driver_age,
+     main = "Original Age",
+     xlab = "Age (years)",
+     col = "lightblue",
+     breaks = 20)
+
+hist(sqrt(searched_stops$driver_age),
+     main = "Square Root of Age",
+     xlab = "Square root of age",
+     col = "lightgreen",
+     breaks = 20)
+
+hist(log(searched_stops$driver_age),
+     main = "Log of Age",
+     xlab = "Natural log of age",
+     col = "lightpink",
+     breaks = 20)
+
+# Restore the original plotting layout.
+par(old_par)
+```
+
+The original distribution of driver age is positively skewed with a greater concentration of younger drivers and long tail extended toward older drivers. We compared square-root and logarithmic transformations to determine which would best reduce this skewness. Both transformations improve the distribution, but the logarithmic transformation appears to produce a more balanced shape by reducing the influence of large age values. Therefore, we selected log-transformed age for further analysis. Although logistic regression does not require normally distributed predictors, this transformation may help capture the relationship between age and likelihood of contraband being found.
+
+## Selecting Potential Predictors
+
+```{r, include=FALSE}
+# Create a separate dataset using standardized variables.
+# County name represents geography without also using county FIPS or the more detailed town and location fields.
+# Exclude constant state and police-department columns. Exclude stop_outcome and is_arrested because they may reflect consequences of contraband discovery.
+our_stops <- searched_stops[, c(
+  "stop_date",
+  "stop_time",
+  "county_name",
+  "driver_gender",
+  "driver_age",
+  "driver_race",
+  "violation",
+  "search_conducted",
+  "search_type",
+  "contraband_found"
+)]
+```
+
+When selecting potential predictors, we considered whether each variable would provide useful information for predicting contraband discovery. We removed variables that contain duplicate information, such as the original and standardized versions of driver race and age. We also excluded variables such as arrest status and stop outcome because they may have been determined after the search occurred. Including these variables could result in information leakage, making the model appear more accurate than it would be when predicting an unknown outcome. These decisions allow us to focus on variables that may provide meaningful information before the search result is known.
+
+## Preparing Month and Search Type
+
+```{r, include=FALSE}
+# Represent stop dates by calendar month.
+our_stops <- our_stops %>%
+  mutate(month = month(ymd(stop_date))) %>%
+  select(-stop_date)
+
+# Retain searches with missing search type in a separate category.
+our_stops <- our_stops %>%
+  mutate(search_type = case_when(
+    is.na(search_type) ~ "no_type",
+    TRUE ~ search_type
+  ))
+```
+
+We represented stop dates by calendar month to explore seasonal differences, recognizing that this combines observations from different years. Missing search types were labeled "no_type" to retain those searches without assuming their justification.
+
+## Preparing Time of Day
+
+```{r, include=FALSE}
+# Group times into six interpretable periods.
+# Preserve missing times as missing rather than assigning a time.
+our_stops <- our_stops %>%
+  mutate(
+    stop_time_bin = na_if(stop_time, "NA"),
+    stop_hour = hour(hms(stop_time_bin)),
+    stop_time_bin = case_when(
+      is.na(stop_hour) ~ NA_character_,
+      stop_hour >= 0 & stop_hour < 4 ~ "late_night",
+      stop_hour >= 4 & stop_hour < 7 ~ "early_morning",
+      stop_hour >= 7 & stop_hour < 12 ~ "morning",
+      stop_hour >= 12 & stop_hour < 17 ~ "afternoon",
+      stop_hour >= 17 & stop_hour < 21 ~ "evening",
+      stop_hour >= 21 & stop_hour < 24 ~ "night"
+    ),
+    stop_time_bin = factor(
+      stop_time_bin,
+      levels = c(
+        "late_night", "early_morning", "morning",
+        "afternoon", "evening", "night"
+      )
+    )
+  )
+```
+
+We grouped times into six periods to make time-of-day comparisons interpretable. The six periods include late night (12am to 4am), early morning (4am to 7am), morning (7am to 12pm), afternoon (12pm to 5pm), evening (5pm to 9pm), and night (9pm to 12am). Each period includes its starting time and excludes its ending time; for example, late night includes midnight through 3:59 a.m.
+
+## Handling Incomplete Records and Applying the Age Transformation
+
+```{r, include=FALSE}
+# Record the number of searched stops before removing incomplete rows.
+n_before <- nrow(our_stops)
+
+# Exclude records missing time or county.
+our_stops <- our_stops %>%
+  filter(!is.na(stop_time_bin)) %>%
+  filter(!is.na(county_name)) %>%
+  select(-stop_time, -stop_hour)
+
+# Apply the selected transformation and exclude missing ages.
+our_stops$log_driver_age <- log(our_stops$driver_age)
+
+our_stops <- our_stops %>%
+  filter(!is.na(log_driver_age)) %>%
+  select(-driver_age)
+
+# Calculate the total number of records removed.
+n_removed <- n_before - nrow(our_stops)
+```
+
+We excluded records missing age, time of day, or county rather than assigning replacement values. This removed `r n_removed` records and retained `r nrow(our_stops)` searched stops. Excluding incomplete records may introduce bias if missingness is related to the outcome or other characteristics. Original age was replaced with log-transformed age in the prepared dataset.
+
+## Preparing Violation Indicators
+
+```{r, include=FALSE}
+# Assign a temporary row identifier for joining violation indicators.
+our_stops <- our_stops %>%
+  mutate(stop_id = row_number())
+
+# Separate comma-delimited violations and create presence indicators.
+violation_flags <- our_stops %>%
+  select(stop_id, violation) %>%
+  separate_rows(violation, sep = ",") %>%
+  mutate(
+    violation = str_squish(violation),
+    present = 1L
+  ) %>%
+  distinct(stop_id, violation, present) %>%
+  pivot_wider(
+    names_from = violation,
+    values_from = present,
+    values_fill = 0L,
+    names_prefix = "viol_"
+  )
+
+# Standardize the new column names.
+violation_flags <- janitor::clean_names(violation_flags)
+
+# Join the indicators and calculate the violation count.
+our_stops <- our_stops %>%
+  left_join(violation_flags, by = "stop_id") %>%
+  mutate(n_violations = rowSums(across(starts_with("viol_"))))
+
+# Remove the original combined violation field and temporary ID.
+our_stops <- our_stops %>%
+  select(-violation, -stop_id)
+
+# Treat violation indicators, counts, and month as categories.
+our_stops <- our_stops %>%
+  mutate(across(starts_with("viol_"), factor)) %>%
+  mutate(n_violations = factor(n_violations)) %>%
+  mutate(month = factor(month))
+
+# Check for remaining missing values.
+colSums(is.na(our_stops))
+```
+
+Some stops listed multiple violations, so we created a separate indicator for each violation and counted the number listed. The count is derived from the indicators, so we will consider this redundancy rather than automatically including both representations in a model.
+
+## Exploring Categorical Predictors by Contraband Outcome
+
+```{r, include=FALSE}
+# Create a plotting copy with readable outcome labels.
+# Keep the original TRUE/FALSE outcome in our_stops.
+plot_stops <- our_stops %>%
+  mutate(contraband_found = factor(
+    contraband_found,
+    levels = c(FALSE, TRUE),
+    labels = c("Not found", "Found")
+  ))
+
+# Create proportional bar charts for categorical predictors.
+plot_outcome_by <- function(
+    data, var, outcome = "contraband_found") {
+
+  ggplot(data, aes(x = .data[[var]], fill = .data[[outcome]])) +
+    geom_bar(position = "fill") +
+    labs(
+      title = paste(
+        "Contraband Outcome by",
+        str_to_title(str_replace_all(var, "_", " "))
+      ),
+      x = str_to_title(str_replace_all(var, "_", " ")),
+      y = "Proportion of searches",
+      fill = "Contraband"
+    ) +
+    scale_y_continuous(labels = scales::percent) +
+    scale_fill_viridis_d(
+      option = "turbo",
+      begin = 0.1,
+      end = 0.9
+    ) +
+    theme_classic() +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      plot.title = element_text(size = 9.5, hjust = 0.5)
+    )
+}
+
+# Identify categorical predictors, excluding the response.
+cat_vars <- plot_stops %>%
+  select(
+    where(~ is.factor(.x) || is.character(.x)),
+    -contraband_found
+  ) %>%
+  names()
+
+cat_plots <- map(
+  cat_vars,
+  ~ plot_outcome_by(plot_stops, .x)
+) %>%
+  set_names(cat_vars)
+```
+
+```{r, fig.width=7, fig.height=5}
+# Display all categorical predictor comparisons.
+walk(cat_plots, print)
+```
+
+##### Still need to decide which to show ######
+
+
+Each bar shows the proportions of searches with and without contraband within a predictor category. Contraband discovery proportions varied across several categorical predictors. Searches classified as “Other” had a higher discovery proportion than consent, inventory, or unspecified searches. Discovery proportions also varied by county and recorded driver race, while gender and time-of-day differences were comparatively small. Among violation indicators, safe-movement and “Other” violations showed higher discovery proportions when present, whereas license and moving violations showed lower proportions. Speeding showed little difference. These comparisons are unadjusted associations and do not establish causation or discrimination.
+
+Some categories contained few observations, making their discovery proportions less stable. The Asian and Other race categories included only 22 and 10 searched drivers, respectively. Similarly, only 40 searches involved two violations, seven involved three, and four involved four. The 0% discovery proportion for Other race and 50% for two violations should therefore be interpreted cautiously.
+
+## Comparing Log-Transformed Age by Contraband Outcome
+
+```{r, include=FALSE}
+# Compare quantitative predictor distributions between outcomes.
+plot_num_by_outcome <- function(
+    data, var, outcome = "contraband_found") {
+
+  ggplot(data, aes(x = .data[[var]], fill = .data[[outcome]])) +
+    geom_density(alpha = 0.5) +
+    scale_fill_viridis_d(
+      option = "turbo",
+      begin = 0.1,
+      end = 0.9
+    ) +
+    labs(
+      x = str_to_title(str_replace_all(var, "_", " ")),
+      y = "Density",
+      fill = "Contraband"
+    ) +
+    theme_classic()
+}
+
+num_vars <- plot_stops %>%
+  select(where(is.numeric), -any_of("stop_id")) %>%
+  names()
+
+num_plots <- map(
+  num_vars,
+  ~ plot_num_by_outcome(plot_stops, .x)
+) %>%
+  set_names(num_vars)
+```
+
+```{r, fig.width=7, fig.height=5}
+walk(num_plots, print)
+```
+
+We compared the distributions of log-transformed age between contraband outcomes. Each density curve has an area of one, allowing comparison of distribution shapes despite different group sizes.
+
+The log-age distribution for searches that found contraband is shifted toward younger ages compared with searches that did not. Searches without contraband have a greater concentration at older ages and a longer right tail. However, the distributions overlap substantially, indicating that age alone does not clearly distinguish contraband outcomes.
+
+## Exploring Relationship Among Predictor Variables
+
+We examined relationships among predictor variables to identify potential associations that could affect our logistic regression model. Strong relationships between predictors may indicate multicollinearity, making it more difficult to interpret their individual effects.
+
+```{r}
+# Compare driver race and gender among searched stops
+ggplot(our_stops,
+       aes(x = driver_race, fill = driver_gender)) +
+  geom_bar(position = "fill") +
+  labs(
+    title = "Driver Gender Distribution by Race",
+    x = "Driver Race",
+    y = "Proportion of Drivers",
+    fill = "Driver Gender"
+  ) +
+  scale_y_continuous(labels = scales::percent) +
+  theme_classic()
+```
+The graph compares driver gender across racial groups among searched vehicles. Male drivers make up the majority of searches in every racial group, with approximately 91–92% of Asian and Black drivers being male, compared to approximately 80% of White and Other drivers. These differences suggest some association between race and gender, although they do not necessarily indicate strong multicollinearity.
+
+```{r}
+#Comparing driver age by race
+ggplot(our_stops,
+       aes(x = driver_race, y = log_driver_age)) +
+  geom_boxplot(fill = "lightblue") +
+  labs(
+    title = "Log Driver Age by Race",
+    x = "Driver Race",
+    y = "Log Driver Age"
+  ) +
+  theme_classic()
+
+```
+The boxplot compares log-transformed driver age across racial groups. Median ages are relatively similar, with Black drivers having a slightly higher median and drivers in the Other category having a slightly lower median. The distributions overlap considerably, suggesting no strong apparent relationship between race and age. Therefore, both variables may provide useful information in our logistic regression model.
