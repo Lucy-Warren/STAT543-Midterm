@@ -20,11 +20,7 @@ library(tidyverse)
 
 # Introduction
 
-The goal of this project is to develop a logistic regression model to predict whether contraband is found when a vehicle is searched during a traffic stop. The data contain Connecticut State Police traffic stops from October 2013 through March 2015. In this first stage, we explore the data, assess missing information, and prepare potential predictors for modeling. We examine predictor distributions, consider transformations, and investigate relationships between predictors and search outcomes, as well as relationships among predictors.
-
-We also explore potential racial disparities through the outcome test, which compares the proportion of searches resulting in contraband discovery across racial groups. Differences in these rates may suggest varying standards for conducting searches, but do not necessarily establish discrimination, as other factors may influence search outcomes.
-
-We begin by examining the structure and quality of the dataset to identify any necessary cleaning steps before conducting our exploratory analysis.
+The goal of this project is to develop a logistic regression model to predict whether contraband is found after a search is conducted during a traffic stop using Connecticut State Police traffic stop data from October 2013 through March 2015. We begin by assessing missing values and examining predictor distributions, applying transformations where appropriate. We then use visualizations to explore relationships between potential predictors and the response variable, as well as associations among predictors, to guide future model development.
 
 # Exploring and Transforming the Data
 
